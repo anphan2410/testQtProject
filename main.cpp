@@ -1,38 +1,74 @@
-#include <QCoreApplication>
-#include "databaseworker.h"
-#include "QThread"
-#include "QSqlDatabase"
+#include <QApplication>
+#include "mainwindow.h"
+#include <QThread>
+#include "piLocalDBWorker/piLocalDBWorker/pilocaldbworker.h"
+#include "SerialPortWorker/SerialPortWorker/serialportworker.h"
+#include "UHVPVICollector/UHVPVICollector/uhvpvicollector.h"
+#include "SmallCoordinator/smallcoordinator.h"
 
 int main(int argc, char *argv[])
 {
-    QCoreApplication a(argc, argv);
+    qRegisterMetaType<GlobalSignal>("GlobalSignal");
+    QApplication a(argc, argv);
+    MainWindow w;
+    w.show();
+
+    SerialPortWorker * uhv2worker = new SerialPortWorker();
+    uhv2worker->setObjectName(UHV2WorkerObjName);
+    SerialPortWorker * uhv4worker = new SerialPortWorker();
+    uhv4worker->setObjectName(UHV4WorkerObjName);
+    UHVPVICollector * uhv2pvicollector = new UHVPVICollector(true);
+    uhv2pvicollector->setObjectName(UHV2PVICollectorObjName);
+    UHVPVICollector * uhv4pvicollector = new UHVPVICollector(false);
+    uhv4pvicollector->setObjectName(UHV4PVICollectorObjName);
+    piLocalDBWorker * piLocalDatabase = new piLocalDBWorker();
+    piLocalDatabase->setObjectName(piLocalDBWorkerObjName);
+    SmallCoordinator * smallcoordinator = new SmallCoordinator();
+    smallcoordinator->setObjectName(SmallCoordinatorObjName);
+
+    QObject::connect(uhv2worker, &SerialPortWorker::Out, smallcoordinator, &SmallCoordinator::In);
+    QObject::connect(uhv4worker, &SerialPortWorker::Out, smallcoordinator, &SmallCoordinator::In);
+    QObject::connect(piLocalDatabase, &piLocalDBWorker::Out, smallcoordinator, &SmallCoordinator::In);
+    QObject::connect(uhv2pvicollector, &UHVPVICollector::Out, smallcoordinator, &SmallCoordinator::In);
+    QObject::connect(uhv4pvicollector, &UHVPVICollector::Out, smallcoordinator, &SmallCoordinator::In);
+
+    QObject::connect(smallcoordinator, &SmallCoordinator::ToPiLocalDBWorker, piLocalDatabase, &piLocalDBWorker::In);
+    QObject::connect(smallcoordinator, &SmallCoordinator::ToUHV2Worker, uhv2worker, &SerialPortWorker::In);
+    QObject::connect(smallcoordinator, &SmallCoordinator::ToUHV4Worker, uhv4worker, &SerialPortWorker::In);
+    QObject::connect(smallcoordinator, &SmallCoordinator::ToUHV2PVICollector, uhv2pvicollector, &UHVPVICollector::In);
+    QObject::connect(smallcoordinator, &SmallCoordinator::ToUHV4PVICollector, uhv4pvicollector, &UHVPVICollector::In);
+
+    QThread * uhv2workerThread = new QThread();
+    QThread * uhv4workerThread = new QThread();
+    QThread * uhv2pvicollectorThread = new QThread();
+    QThread * uhv4pvicollectorThread = new QThread();
+    QThread * piLocalDatabaseThread = new QThread();
+    QThread * smallcoordinatorThread = new QThread();
+
+    uhv2worker->moveToThread(uhv2workerThread);
+    uhv4worker->moveToThread(uhv4workerThread);
+    uhv2pvicollector->moveToThread(uhv2pvicollectorThread);
+    uhv4pvicollector->moveToThread(uhv4pvicollectorThread);
+    piLocalDatabase->moveToThread(piLocalDatabaseThread);
+    smallcoordinator->moveToThread(smallcoordinatorThread);
+
+    QObject::connect(uhv2workerThread, &QThread::started, uhv2worker, &SerialPortWorker::start);
+    QObject::connect(uhv4workerThread, &QThread::started, uhv4worker, &SerialPortWorker::start);
+    QObject::connect(uhv2pvicollectorThread, &QThread::started, uhv2pvicollector, &UHVPVICollector::start);
+    QObject::connect(uhv4pvicollectorThread, &QThread::started, uhv4pvicollector, &UHVPVICollector::start);
+    QObject::connect(piLocalDatabaseThread, &QThread::started, piLocalDatabase, &piLocalDBWorker::start);
+    QObject::connect(smallcoordinatorThread, &QThread::started, smallcoordinator, &SmallCoordinator::start);
+
+    QObject::connect(smallcoordinator, &SmallCoordinator::getReady, [&](){
+        piLocalDatabaseThread->start();
+        uhv2workerThread->start();
+        uhv4workerThread->start();
+        uhv2pvicollectorThread->start();
+        uhv4pvicollectorThread->start();
+    });
+
+    smallcoordinatorThread->start();
 
 
-
-    DatabaseWorker *worker1 = new DatabaseWorker("worker1","myconnection");
-    DatabaseWorker *worker2 = new DatabaseWorker("worker2","myconnection");
-    DatabaseWorker *worker3 = new DatabaseWorker("worker3","myconnection");
-    DatabaseWorker *worker4 = new DatabaseWorker("worker4","myconnection");
-
-    QThread *thread1 = new QThread();
-    QThread *thread2 = new QThread();
-    QThread *thread3 = new QThread();
-    QThread *thread4 = new QThread();
-
-
-    QObject::connect(thread1, SIGNAL(started()), worker1,SLOT(start()));
-    QObject::connect(thread2, SIGNAL(started()), worker2,SLOT(start()));
-    QObject::connect(thread3, SIGNAL(started()), worker3,SLOT(start()));
-    QObject::connect(thread4, SIGNAL(started()), worker4,SLOT(start()));
-
-    worker1->moveToThread(thread1);
-    worker2->moveToThread(thread2);
-    worker3->moveToThread(thread3);
-    worker4->moveToThread(thread4);
-
-    thread1->start();
-    thread2->start();
-    thread3->start();
-    thread4->start();
     return a.exec();
 }
